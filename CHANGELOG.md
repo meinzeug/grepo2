@@ -6,6 +6,46 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 
 ## [Unreleased]
 
+### Version 3.7.4.2 (2025-08-03) - OPENROUTER MODEL LOADING BUGFIX
+**🔧 Critical NoneType Comparison Error Fix**
+
+#### ⚠️ Critical Bug Fixed
+- **FIXED**: "'>' not supported between instances of 'int' and 'NoneType'" error in OpenRouter model loading
+- **ROOT CAUSE**: OpenRouter API returns None values for `max_completion_tokens` and `context_length` in some models
+- **SOLUTION**: Added proper None-value handling in `get_sort_key()` function before comparison operations
+- **IMPACT**: AI-Integration configuration now works reliably without crashes
+
+#### 🔧 Technical Implementation
+- **Modified Function**: `fetch_openrouter_models()` in line ~295
+- **Fix Location**: `get_sort_key()` helper function within model sorting logic
+- **Change**: Added explicit None-to-zero conversion before `max()` comparison
+- **Code Change**: 
+  ```python
+  # Before (causing error):
+  return max(max_completion, context_length, 0)
+  
+  # After (fixed):
+  max_completion = max_completion if max_completion is not None else 0
+  context_length = context_length if context_length is not None else 0
+  return max(max_completion, context_length, 0)
+  ```
+
+#### 🎯 Error Flow Fixed
+```
+Einstellungen → AI-Integration konfigurieren → OpenRouter Token eingeben
+→ 🔍 Lade verfügbare coding models von OpenRouter...
+→ ❌ (BEFORE) Unerwarteter Fehler: '>' not supported between instances of 'int' and 'NoneType'
+→ ✅ (AFTER) Erfolgreiches Laden und Sortieren der Models
+```
+
+#### 🛡️ Robustness Improvements
+- **Type Safety**: Explicit handling of None values from API responses
+- **Graceful Degradation**: Models with missing data still processable
+- **Preserved Functionality**: All existing OpenRouter features remain intact
+- **Backward Compatibility**: No breaking changes to configuration or workflow
+
+---
+
 ### Version 3.7.4.1 (2025-08-03) - OPENROUTER API INTEGRATION
 **🚀 Live Free Coding Models from OpenRouter**
 
