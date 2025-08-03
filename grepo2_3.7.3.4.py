@@ -6,7 +6,7 @@ grepo2 v3.7.3.4 - Git Repository Management Tool
 🎯 Configuration Error Handling:
    • Robuste Base64-Dekodierung mit automatischer Padding-Korrektur
    • Bessere Fehlerbehandlung für beschädigte Token-Daten
-   • Benutzerfreundliche Recovery-Hinweise bei Konfigurationsproblemen
+   • Benutzerfreundliche Recovery Hinweise bei Konfigurationsproblemen
 
 🔧 Key Features:
    • Repository-Auswahl im Hauptmenü
