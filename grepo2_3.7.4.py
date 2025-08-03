@@ -230,14 +230,14 @@ def write_to_changelog(message: str, category: str = "info") -> None:
 # ─── Section IV: GitHub API Integration ─────────────────────────────────────────
 
 class GitHubAPI:
-    """GitHub API Client mit erweiterten Features für v3.7.3+"""
+    """GitHub API Client mit erweiterten Features für v3.7.4"""
     
     def __init__(self, token: str):
         self.token = token
         self.headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "grepo2-v3.7.3.3"
+            "User-Agent": "grepo2-v3.7.4"
         }
         self.base_url = "https://api.github.com"
 
@@ -1433,7 +1433,7 @@ def run_tui():
         ]
         opts = repo_opts + fixed_opts
         
-        context = f"Aktiver Benutzer: {user} | Repositories: {len(repos)} | grepo2 v3.7.3.3"
+        context = f"Aktiver Benutzer: {user} | Repositories: {len(repos)} | grepo2 v3.7.4"
         sel = run_curses_menu("grepo2 Hauptmenü", opts, context)
         
         if sel is None or sel == len(opts) - 1:  # Exit
