@@ -6,6 +6,50 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 
 ## [Unreleased]
 
+### Version 3.7.3.4 (2025-08-03) - CONFIGURATION ERROR HANDLING
+**🔧 Base64 Padding & Token Recovery Fix**
+
+#### ⭐ Major Fix
+- **FIXED**: "Incorrect padding" error in base64 token decoding 
+- **IMPROVED**: Robust user configuration loading with automatic recovery
+- **ENHANCED**: Better error messages and recovery guidance for corrupted tokens
+- **MAINTAINED**: All existing functionality while improving reliability
+
+#### 🚀 Key Improvements
+- **Automatic Padding**: Base64 decoder now handles missing padding automatically
+- **Graceful Degradation**: Corrupted tokens don't crash the application
+- **Recovery Instructions**: Clear guidance when tokens need to be updated
+- **Backward Compatibility**: Still works with existing valid configurations
+
+#### 🔧 Technical Implementation
+- **Enhanced `_deobfuscate()`**: Automatic padding calculation and fallback handling
+- **Improved `load_user_config()`**: Individual token validation with specific error messages
+- **Better Error Handling**: Distinguishes between GitHub and OpenRouter token issues
+- **User Guidance**: Provides specific instructions for fixing configuration problems
+
+#### 🐛 Specific Bug Fixes
+- **Base64 Error**: "Incorrect padding" → Automatic padding correction
+- **Configuration Loading**: Graceful handling of corrupted token data
+- **User Experience**: Clear error messages instead of cryptic technical errors
+- **Token Recovery**: Guides users to fix their configuration through settings
+
+#### 🎯 Error Flow Before Fix
+```
+Hauptmenü → Projekterstellung → REPONAME → Code generieren mit Codex
+→ ⚠ Fehler beim Laden der Benutzer-Konfiguration: Incorrect padding
+→ ❌ Benutzer-Konfiguration nicht gefunden
+```
+
+#### ✅ Error Flow After Fix
+```
+Hauptmenü → Projekterstellung → REPONAME → Code generieren mit Codex
+→ ⚠ Fehler beim Dekodieren des GitHub-Tokens: Incorrect padding  
+→ 💡 Bitte aktualisiere dein GitHub Token in den Einstellungen
+→ [Continues with graceful recovery]
+```
+
+---
+
 ### Version 3.7.3.3 (2025-08-03) - MISSING FUNCTION RESTORATION
 **🔧 Critical NameError Fix**
 
