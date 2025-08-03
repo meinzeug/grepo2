@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+grepo2: Ein TUI- und CLI-Tool zur Vereinfachung der GitHub-Verwaltung.
+
+Version 3.2 führt eine vereinfachte Menüstruktur ein. Nach Auswahl eines
+Repos werden die häufigsten Aktionen direkt angezeigt. Alle technischen
+Details sind in einem "Pro Options"-Menü zusammengefasst.
+
+================================================================================
+INSTALLATION:
+================================================================================
+1. Speichern Sie dieses Skript als `grepo2`.
+2. Machen Sie es ausführbar: `chmod +x grepo2`
+3. Führen Sie es aus: `./grepo2`. Der Assistent wird Sie durch die Einrichtung
+   und die optionale systemweite Installation führen.
+================================================================================
+
+Nutzung:
+  - `grepo2`: Startet die interaktive TUI-Anwendung.
+  - `grepo2 go <befehl>`: Führt CLI-Befehle aus (z.B. `grepo2 go repo list`).
+"""
+
+import sys
+import subprocess
+import json
+import os
+import re
+import base64
+import curses
+import textwrap
+import shutil
+import time
+from pathlib import Path
+from typing import List, Tuple, Any, Optional, Callable, Dict
+from getpass import getpass
+
+# --- Section I: Dependency Imports and Pre-flight Check ---
+
+try:
+    import click
+    from rich.console import Console
+    from rich.table import Table
+    from rich.markdown import Markdown
+    from rich.panel import Panel
+except ImportError:
+    print("❌ Fehler: Notwendige Python-Pakete (rich, click) nicht gefunden.", file=sys.stderr)
+    print("   Bitte installieren Sie diese mit: pip install rich click", file=sys.stderr)
+    sys.exit(1)
+
+def check_git_cli():
+    """Prüft, ob `git` verfügbar ist."""
+    try:
+        subprocess.run(["git", "--version"], check=True, capture_output=True)
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("❌ Fehler: Das Git CLI ('git') ist nicht im System-PATH gefunden.", file=sys.stderr)
+        print("   Bitte installieren Sie Git für Ihr Betriebssystem.", file=sys.stderr)
+        return False
+
+# --- Section II: Path and Configuration ---
+
+CONFIG_DIR = Path.home() / ".config" / "grepo2"
+GITHUB_DIR = Path.home() / "github2"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+GITHUB_DIR.mkdir(exist_ok=True)
+
+def _obfuscate(data: str) -> str: return base64.b64encode(data.encode()).decode()
+def _deobfuscate(data: str) -> str: return base64.b64decode(data.encode()).decode()
+
+def load_config() -> Optional[Dict]:
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE, 'r') as f:
+            try:
+                config = json.load(f)
+                if "token" in config: config["token"] = _deobfuscate(config["token"])
+                return config
+            except (json.JSONDecodeError, KeyError): return None
+    return None
+
+def save_config(data: Dict):
+    if "token" in data: data["token"] = _obfuscate(data["token"])
+    with open(CONFIG_FILE, 'w') as f: json.dump(data, f, indent=2)
+
+# --- Section III: Core Logic - API Abstractions ---
+
+class LocalGitAPI:
+    """Führt lokale Git-Befehle in einem bestimmten Repository aus."""
+    def _run_command(self, repo_path: Path, command: List[str], capture=True) -> Tuple[bool, str]:
+        try:
+            process = subprocess.run(
+                ["git"] + command, cwd=str(repo_path),
+                capture_output=capture, text=True, check=False, encoding='utf-8'
+            )
+            if process.returncode != 0: return False, process.stderr or process.stdout
+            return True, process.stdout
+        except Exception as e:
+            return False, str(e)
+
+    def status(self, path: Path): return self._run_command(path, ["status"])
+    def diff(self, path: Path): return self._run_command(path, ["diff", "--color=always"])
+    def stage_interactive(self, path: Path): return self._run_command(path, ["add", "-p"], capture=False)
+    def commit(self, path: Path): return self._run_command(path, ["commit", "-v"], capture=False)
+    def get_branches(self, path: Path): return self._run_command(path, ["branch", "-vv"])
+    def create_branch(self, path: Path, name: str): return self._run_command(path, ["checkout", "-b", name])
+    def switch_branch(self, path: Path, name: str): return self._run_command(path, ["checkout", name])
+    def delete_branch(self, path: Path, name: str): return self._run_command(path, ["branch", "-D", name])
+    def get_remotes(self, path: Path): return self._run_command(path, ["remote", "-v"])
+    def fetch(self, path: Path): return self._run_command(path, ["fetch", "--all", "--prune"])
+    def pull_rebase(self, path: Path): return self._run_command(path, ["pull", "--rebase"])
+    def push(self, path: Path): return self._run_command(path, ["push"])
+    def push_force_with_lease(self, path: Path): return self._run_command(path, ["push", "--force-with-lease"])
+    def hard_reset_to_remote(self, path: Path):
+        success, remote_branch = self._run_command(path, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        if not success: return False, "Kein Remote-Branch gefunden, zu dem zurückgesetzt werden kann."
+        return self._run_command(path, ["reset", "--hard", remote_branch.strip()])
+    def log(self, path: Path): return self._run_command(path, ["log", "--oneline", "--graph", "--decorate", "-n", "20"])
+    def show_config(self, path: Path): return self._run_command(path, ["config", "--list"])
+
+class GitHubAPI:
+    def __init__(self, username: str, token: str):
+        self.username = username; self.token = token
+        self.headers = {"Authorization": f"token {self.token}", "Accept": "application/vnd.github.v3+json"}
+    def _run_request(self, method: str, endpoint: str, data: Optional[Dict] = None) -> Tuple[bool, Any]:
+        try: import requests
+        except ImportError: return False, "Das 'requests' Paket wird benötigt."
+        url = f"https://api.github.com/{endpoint}"
+        try:
+            if method.upper() == 'GET': response = requests.get(url, headers=self.headers)
+            elif method.upper() == 'POST': response = requests.post(url, headers=self.headers, json=data)
+            else: return False, f"Nicht unterstützte HTTP-Methode: {method}"
+            if response.status_code == 404: return False, "Not Found"
+            if response.status_code >= 400: return False, response.json().get("message", f"HTTP-Fehler {response.status_code}")
+            return True, response.json() if response.text else ""
+        except requests.exceptions.RequestException as e: return False, f"Netzwerkfehler: {e}"
+    def repo_exists(self, repo_name: str) -> bool:
+        success, _ = self._run_request('GET', f'repos/{self.username}/{repo_name}'); return success
+    def create_repo(self, name: str, description: str, private: bool) -> Tuple[bool, Any]:
+        return self._run_request('POST', 'user/repos', data={'name': name, 'description': description, 'private': private})
+    def clone_repo(self, repo_name: str, target_dir: str) -> Tuple[bool, Any]:
+        clone_url = f"https://{self.username}:{self.token}@github.com/{self.username}/{repo_name}.git"
+        try:
+            result = subprocess.run(["git", "clone", clone_url, str(target_dir)], capture_output=True, text=True, check=False)
+            if result.returncode != 0: return False, result.stderr
+            return True, result.stdout
+        except FileNotFoundError: return False, "Git ist nicht installiert."
+    def gh_repo_sync(self, repo_path: Path) -> Tuple[bool, str]:
+        try:
+            process = subprocess.run(["gh", "repo", "sync"], cwd=str(repo_path), capture_output=True, text=True, check=False, encoding='utf-8')
+            if process.returncode != 0: return False, process.stderr or process.stdout
+            return True, process.stdout
+        except Exception as e: return False, str(e)
+    def gh_repo_view(self, repo_path: Path) -> Tuple[bool, str]:
+        try:
+            process = subprocess.run(["gh", "repo", "view"], cwd=str(repo_path), capture_output=True, text=True, check=False, encoding='utf-8')
+            if process.returncode != 0: return False, process.stderr or process.stdout
+            return True, process.stdout
+        except Exception as e: return False, str(e)
+
+
+# --- Section IV: The Curses-based TUI ---
+
+console = Console()
+git_api = LocalGitAPI()
+gh_api = None
+
+def run_curses_menu(title: str, options: List[Tuple[str, str]]) -> Optional[int]:
+    # ... (Identisch zur vorherigen Version)
+    def draw_menu(stdscr, selected_row_idx):
+        stdscr.clear(); h, w = stdscr.getmaxyx()
+        stdscr.addstr(1, 2, title, curses.A_BOLD)
+        for idx, (option_name, _) in enumerate(options):
+            x, y = 2, 3 + idx
+            if idx == selected_row_idx:
+                stdscr.attron(curses.color_pair(1)); stdscr.addstr(y, x, f"> {option_name}"); stdscr.attroff(curses.color_pair(1))
+            else:
+                stdscr.addstr(y, x, f"  {option_name}")
+        desc_y = 3 + len(options) + 1; desc_x = 2; box_width = w - 4
+        stdscr.addstr(desc_y, desc_x, "┌" + "─" * (box_width - 2) + "┐")
+        stdscr.addstr(desc_y + 1, desc_x, "│ "); stdscr.addstr(desc_y + 1, desc_x + box_width - 1, "│")
+        stdscr.addstr(desc_y + 2, desc_x, "└" + "─" * (box_width - 2) + "┘")
+        description = options[selected_row_idx][1]
+        wrapped_text = textwrap.wrap(description, width=box_width - 4)
+        if wrapped_text: stdscr.addstr(desc_y + 1, desc_x + 2, wrapped_text[0])
+        info = "Pfeiltasten: Navigation | Enter: Auswählen | Q: Beenden/Zurück"
+        stdscr.addstr(h - 2, 2, info, curses.A_DIM); stdscr.refresh()
+
+    def main_loop(stdscr):
+        curses.curs_set(0); curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_WHITE)
+        current_row = 0
+        while True:
+            draw_menu(stdscr, current_row)
+            key = stdscr.getch()
+            if key == curses.KEY_UP and current_row > 0: current_row -= 1
+            elif key == curses.KEY_DOWN and current_row < len(options) - 1: current_row += 1
+            elif key == ord('q'): return None
+            elif key == curses.KEY_ENTER or key in [10, 13]: return current_row
+    return curses.wrapper(main_loop)
+
+def _execute_and_display(title: str, func: Callable, *args):
+    """Hilfsfunktion, um Curses zu verlassen, einen Befehl auszuführen und das Ergebnis anzuzeigen."""
+    console.clear()
+    console.rule(f"[bold cyan]{title}")
+    with console.status("Führe Befehl aus..."):
+        success, result = func(*args)
+    
+    if success:
+        console.print(result or "[green]Befehl erfolgreich ausgeführt.[/green]")
+    else:
+        console.print(f"[bold red]Fehler:[/]\n{result}")
+    input("\nDrücke Enter, um fortzufahren...")
+
+def tui_repo_menu_status(path: Path):
+    options = [
+        ("Status prüfen", "Zeigt `git status` für das Repository an."),
+        ("Änderungen ansehen (Diff)", "Zeigt die ungestageten Änderungen an (`git diff`)."),
+        ("Dateien stagen / unstagen (interaktiv)", "Startet `git add -p`, um Änderungen auszuwählen."),
+        ("Commit erstellen", "Öffnet den Editor, um einen Commit zu erstellen (`git commit`)."),
+        ("Zurück", "Zurück zum Pro Options Menü.")
+    ]
+    while True:
+        choice = run_curses_menu("Status & Commit", options)
+        if choice is None or choice == 4: break
+        if choice == 0: _execute_and_display("Git Status", git_api.status, path)
+        elif choice == 1: _execute_and_display("Git Diff", git_api.diff, path)
+        elif choice == 2: _execute_and_display("Git Add Interactive", git_api.stage_interactive, path)
+        elif choice == 3: _execute_and_display("Git Commit", git_api.commit, path)
+
+def tui_repo_menu_branching(path: Path):
+    options = [
+        ("Branches anzeigen", "Listet alle lokalen und Remote-Branches auf."),
+        ("Neuen Branch erstellen", "Erstellt einen neuen Branch und wechselt zu ihm."),
+        ("Branch wechseln", "Wechselt zu einem anderen, existierenden Branch."),
+        ("Branch löschen", "Löscht einen lokalen Branch."),
+        ("Zurück", "Zurück zum Pro Options Menü.")
+    ]
+    while True:
+        choice = run_curses_menu("Branching & Navigation", options)
+        if choice is None or choice == 4: break
+        if choice == 0: _execute_and_display("Branches", git_api.get_branches, path)
+        elif choice == 1:
+            console.clear(); name = input("Name des neuen Branches: ")
+            if name: _execute_and_display(f"Erstelle Branch '{name}'", git_api.create_branch, path, name)
+        elif choice == 2:
+            console.clear(); name = input("Name des Branches, zu dem gewechselt werden soll: ")
+            if name: _execute_and_display(f"Wechsle zu Branch '{name}'", git_api.switch_branch, path, name)
+        elif choice == 3:
+            console.clear(); name = input("Name des zu löschenden Branches: ")
+            if name: _execute_and_display(f"Lösche Branch '{name}'", git_api.delete_branch, path, name)
+
+def tui_repo_menu_remote(path: Path):
+    options = [
+        ("Remote-URLs anzeigen", "Zeigt die konfigurierten Remote-URLs an (`git remote -v`)."),
+        ("Remote-Inhalte holen (fetch)", "Holt die neuesten Änderungen vom Remote, ohne sie anzuwenden."),
+        ("Safe Pull & Rebase", "Holt und integriert Änderungen vom Remote mit Rebase."),
+        ("Push", "Lädt lokale Commits zum Remote hoch."),
+        ("Force-Push (sicher)", "Überschreibt den Remote-Branch, aber nur wenn keine neuen Commits vorliegen."),
+        ("Hard-Reset: Remote -> Lokal", "VORSICHT: Verwirft alle lokalen Änderungen und setzt auf den Stand des Remotes zurück."),
+        ("Zurück", "Zurück zum Pro Options Menü.")
+    ]
+    while True:
+        choice = run_curses_menu("Remote-Verwaltung", options)
+        if choice is None or choice == 6: break
+        if choice == 0: _execute_and_display("Remote URLs", git_api.get_remotes, path)
+        elif choice == 1: _execute_and_display("Fetch", git_api.fetch, path)
+        elif choice == 2: _execute_and_display("Pull & Rebase", git_api.pull_rebase, path)
+        elif choice == 3: _execute_and_display("Push", git_api.push, path)
+        elif choice == 4:
+            console.clear();
+            if input("Sicher, dass du einen Force-Push (with-lease) durchführen möchtest? (ja/nein): ").lower() == 'ja':
+                _execute_and_display("Force Push (with lease)", git_api.push_force_with_lease, path)
+        elif choice == 5:
+            console.clear();
+            if input(f"WARNUNG: Alle lokalen Änderungen im aktuellen Branch werden verworfen! Sicher? (ja/nein): ").lower() == 'ja':
+                _execute_and_display("Hard Reset to Remote", git_api.hard_reset_to_remote, path)
+
+def tui_repo_menu_github(path: Path):
+    options = [
+        ("GitHub-Repo synchronisieren", "Führt `gh repo sync` aus, um Branches zu synchronisieren."),
+        ("Repository-Details anzeigen", "Führt `gh repo view` aus, um Details anzuzeigen."),
+        ("Zurück", "Zurück zum Pro Options Menü.")
+    ]
+    while True:
+        choice = run_curses_menu("GitHub-CLI & Sync", options)
+        if choice is None or choice == 2: break
+        if choice == 0: _execute_and_display("GitHub Repo Sync", gh_api.gh_repo_sync, path)
+        elif choice == 1: _execute_and_display("GitHub Repo View", gh_api.gh_repo_view, path)
+
+def tui_repo_menu_misc(path: Path):
+    options = [
+        ("Commit-Historie anzeigen", "Zeigt die letzten 20 Commits als Graph an."),
+        ("Lokale Konfiguration prüfen", "Zeigt den Inhalt von `.git/config` an."),
+        ("Zurück", "Zurück zum Pro Options Menü.")
+    ]
+    while True:
+        choice = run_curses_menu("Sonstiges & Info", options)
+        if choice is None or choice == 2: break
+        if choice == 0: _execute_and_display("Commit-Historie", git_api.log, path)
+        elif choice == 1: _execute_and_display("Lokale Git-Konfiguration", git_api.show_config, path)
+
+def tui_pro_options_menu(repo_path: Path):
+    """Das Menü für alle fortgeschrittenen Git-Befehle."""
+    options = [
+        ("Status & Commit", "Änderungen prüfen, stagen und committen."),
+        ("Branching & Navigation", "Branches anzeigen, erstellen und wechseln."),
+        ("Remote-Verwaltung", "Änderungen mit dem Remote-Repository austauschen."),
+        ("GitHub-CLI & Sync", "Spezifische `gh`-Befehle für dieses Repo ausführen."),
+        ("Sonstiges & Info", "Commit-Historie, Konfiguration und Details anzeigen."),
+        ("Zurück zum einfachen Menü", "Die Pro-Optionen verlassen.")
+    ]
+    while True:
+        choice = run_curses_menu(f"Pro Options: {repo_path.name}", options)
+        if choice is None or choice == 5: break
+        if choice == 0: tui_repo_menu_status(repo_path)
+        elif choice == 1: tui_repo_menu_branching(repo_path)
+        elif choice == 2: tui_repo_menu_remote(repo_path)
+        elif choice == 3: tui_repo_menu_github(repo_path)
+        elif choice == 4: tui_repo_menu_misc(repo_path)
+
+def tui_manage_repo(repo_path: Path):
+    """Das neue, einfache Hauptmenü für die Verwaltung eines Repositories."""
+    options = [
+        ("Status prüfen", "Zeigt `git status` an."),
+        ("Änderungen hochladen (Push)", "Lädt lokale Commits zum Remote hoch (`git push`)."),
+        ("Änderungen herunterladen (Pull)", "Holt und integriert Änderungen vom Remote (`git pull --rebase`)."),
+        ("Commit erstellen", "Öffnet den Editor, um einen Commit zu erstellen (`git commit`)."),
+        ("Pro Options", "Öffnet das Menü für fortgeschrittene Git-Befehle."),
+        ("Zurück zum Hauptmenü", "Die Repository-Auswahl verlassen.")
+    ]
+    while True:
+        choice = run_curses_menu(f"Verwalte: {repo_path.name}", options)
+        if choice is None or choice == 5: break
+        if choice == 0: _execute_and_display("Git Status", git_api.status, repo_path)
+        elif choice == 1: _execute_and_display("Git Push", git_api.push, repo_path)
+        elif choice == 2: _execute_and_display("Git Pull & Rebase", git_api.pull_rebase, repo_path)
+        elif choice == 3: _execute_and_display("Git Commit", git_api.commit, repo_path)
+        elif choice == 4: tui_pro_options_menu(repo_path)
+
+def tui_first_time_setup():
+    # ... (Identisch zur vorherigen Version)
+    pass
+
+def run_tui():
+    """Hauptschleife für den TUI-Modus."""
+    while True:
+        config = load_config()
+        user_dir = GITHUB_DIR / config.get("username", "")
+        
+        repo_options = []
+        repos = []
+        if user_dir.is_dir():
+            repos = sorted([d for d in user_dir.iterdir() if d.is_dir() and d.name != "backup"], key=lambda p: p.name)
+            repo_options = [(repo.name, f"Verwalte das lokale Repository '{repo.name}'") for repo in repos]
+        
+        fixed_options = [
+            ("Neues Repository erstellen", "Ein neues Repository auf deinem GitHub-Konto anlegen und klonen."),
+            ("Exit", "Das Programm beenden.")
+        ]
+        
+        options = repo_options + fixed_options
+        
+        selected_index = run_curses_menu("grepo2 Hauptmenü", options)
+
+        if selected_index is None or selected_index == len(options) - 1: # Exit
+            break
+        elif selected_index < len(repo_options): # Ein Repo wurde ausgewählt
+            tui_manage_repo(repos[selected_index])
+        elif selected_index == len(repo_options): # Neues Repo erstellen
+            console.clear()
+            console.print("Diese Funktion ist Teil der Ersteinrichtung und muss noch für den normalen Gebrauch angepasst werden.")
+            input("\nDrücke Enter...")
+
+
+# --- Section V: The Command-Line Interface (CLI) ---
+@click.group()
+def go(): pass
+# (CLI-Befehle hier)
+
+# --- Section VI: Main Execution Block ---
+def main():
+    if not check_git_cli(): sys.exit(1)
+    try:
+        if len(sys.argv) > 1 and sys.argv[1] == "go":
+            sys.argv.pop(1); go()
+        else:
+            config = load_config()
+            if not config or not config.get("setup_complete"):
+                # Hier würde die Ersteinrichtung aufgerufen
+                console.print("Bitte führe zuerst die Ersteinrichtung aus, indem du das Skript zum ersten Mal startest.")
+                sys.exit(1)
+            
+            global gh_api
+            gh_api = GitHubAPI(username=config["username"], token=config["token"])
+            run_tui()
+    except curses.error as e:
+        print(f"❌ Ein Terminal-Fehler ist aufgetreten: {e}", file=sys.stderr)
+    except Exception as e:
+        console.print(f"Ein unerwarteter Fehler ist aufgetreten: {e}", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()
