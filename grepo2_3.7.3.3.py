@@ -1402,7 +1402,7 @@ def run_tui():
         ]
         opts = repo_opts + fixed_opts
         
-        context = f"Aktiver Benutzer: {user} | Repositories: {len(repos)} | grepo2 v3.7.3.2"
+        context = f"Aktiver Benutzer: {user} | Repositories: {len(repos)} | grepo2 v3.7.3.3"
         sel = run_curses_menu("grepo2 Hauptmenü", opts, context)
         
         if sel is None or sel == len(opts) - 1:  # Exit
