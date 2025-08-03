@@ -28,6 +28,7 @@ import curses
 import textwrap
 import base64
 import filecmp
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple, Callable
 from getpass import getpass
@@ -335,6 +336,34 @@ class GitHubAPI:
             console.print(f"[red]❌ Fehler beim Schließen des Issues: {e}[/red]")
             write_to_changelog(f"Fehler beim Schließen von Issue #{issue_number}: {e}", "error")
             return False
+
+    def create_issue(self, owner: str, repo: str, title: str, body: str, labels: List[str] = None) -> Tuple[bool, Optional[int]]:
+        """Erstellt ein neues GitHub Issue"""
+        try:
+            payload = {
+                "title": title,
+                "body": body
+            }
+            if labels:
+                payload["labels"] = labels
+            
+            response = requests.post(
+                f"{self.base_url}/repos/{owner}/{repo}/issues",
+                headers=self.headers,
+                json=payload
+            )
+            
+            if response.status_code == 201:
+                issue_data = response.json()
+                issue_number = issue_data.get("number")
+                return True, issue_number
+            else:
+                console.print(f"[red]❌ Fehler beim Erstellen des Issues: HTTP {response.status_code}[/red]")
+                return False, None
+                
+        except Exception as e:
+            console.print(f"[red]❌ Fehler beim Erstellen des Issues: {e}[/red]")
+            return False, None
 
 
 # ─── Section V: Local Git API ───────────────────────────────────────────────────
@@ -1317,6 +1346,254 @@ def run_tui():
                     )
                     if choice is not None:
                         tui_projekterstellung_menu(repos[choice])
+
+
+
+def tui_projekterstellung_menu(repo_path: Path):
+    """Projekterstellung-Menü mit Roadmap-Generierung und Issue-Erstellung"""
+    options = [
+        ("🗺️ Roadmap generieren",              "Erstelle eine technische Roadmap"),
+        ("📋 Projekt auf GitHub einrichten",   "Erstelle Issues auf GitHub"),
+        ("🤖 Code generieren mit Codex",       "Autonome KI-Code-Generierung mit Issues"),
+        ("Zurück",                             "Hauptmenü")
+    ]
+    while True:
+        choice = run_curses_menu("Projekterstellung", options, f"Projekterstellung – {repo_path.name}")
+        if choice is None or choice == 3:
+            break
+        elif choice == 0:
+            tui_generate_roadmap(repo_path)
+        elif choice == 1:
+            tui_setup_github_project(repo_path)
+        elif choice == 2:
+            tui_codex_generate(repo_path)
+
+
+def tui_generate_roadmap(repo_path: Path):
+    """Generiert eine technische Roadmap basierend auf README.md"""
+    console.clear()
+    console.rule(f"[bold cyan]Roadmap generieren: {repo_path.name}")
+
+    readme = repo_path / "README.md"
+    if not readme.exists():
+        console.print(f"[red]❌ Keine README.md in {repo_path} gefunden![/red]")
+        input("Drücke Enter, um zurückzugehen…")
+        return
+    
+    with open(readme, "r", encoding="utf-8") as f:
+        full_text = f.read()
+    
+    size = len(full_text.encode("utf-8"))
+    console.print(f"[green]✓ README.md gefunden ({size} Bytes)[/green]")
+    input("Drücke Enter, um fortzufahren…")
+    
+    snippet = full_text if len(full_text) <= 100 else full_text[:50] + "\n...\n" + full_text[-50:]
+
+    user = get_active_user()
+    ucfg = load_user_config(user) or {}
+    token = ucfg.get("openrouter_token")
+    if not token:
+        console.print("[red]❌ KI-Anbindung nicht konfiguriert![/red]")
+        console.print("Bitte konfiguriere OpenRouter Token in den Einstellungen.")
+        input("Drücke Enter, um zurückzugehen…")
+        return
+
+    system = (
+        "Du bist ein erfahrener Softwarearchitekt und Projektmanager. "
+        "Die README.md wird als Lastenpflichtenheft verstanden. "
+        "Identifiziere alle Anforderungen (funktional und nicht-funktional) und erstelle eine professionelle "
+        "technische Roadmap nach Software-Entwicklungsstandards: Agile Phasen, CI/CD, Feature-Implementierung, "
+        "automatisierte Tests, Code-Reviews und Dokumentation. "
+        "Formatiere in Markdown mit klar abgegrenzten Phasen: 'PHASE X – <Titel>'. "
+        "Unter jeder Phase mindestens zehn Aufgaben. Die Phase Feature-Implementierung umfasst so viele "
+        "Aufgaben wie nötig, um alle Konzeptanforderungen und Features aus der README.md abzudecken. "
+        "Jede Aufgabe im Format:\n"
+        "[ ] Kurztitel: DETAILLIERTE technische Anweisung mit mindestens drei vollständigen Sätzen."
+    )
+
+    preview_msg = (
+        "README.md (gekürzt) als Lastenheft:\n\n"
+        f"```markdown\n{snippet}\n```\n\n"
+        "Erzeuge daraus 'roadmap.md' im Format:\n"
+        "PHASE X – <Phasen-Titel>\n"
+        "[ ] Kurztitel: DETAILLIERTE technische Anweisung mit mindestens drei vollständigen Sätzen.\n"
+    )
+
+    api_user_msg = (
+        "Hier die vollständige README.md als Lastenpflichtenheft:\n\n"
+        f"```markdown\n{full_text}\n```\n\n"
+        "Erzeuge daraus 'roadmap.md' im Format:\n"
+        "PHASE X – <Phasen-Titel>\n"
+        "[ ] Kurztitel: DETAILLIERTE technische Anweisung mit mindestens drei vollständigen Sätzen.\n"
+    )
+
+    console.clear()
+    console.rule("[bold cyan]Prompt-Vorschau")
+    console.print(Panel.fit(system,      title="System Prompt",         border_style="blue"))
+    console.print(Panel.fit(preview_msg, title="User Prompt (gekürzt)", border_style="green"))
+    
+    if input("Anfrage senden? (j/n): ").lower() != 'j':
+        console.print("[yellow]Abgebrochen[/yellow]")
+        input()
+        return
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept":        "text/event-stream",
+        "Content-Type":  "application/json; charset=utf-8"
+    }
+
+    console.print(f"[blue]Sende Streaming-POST…[/blue]")
+    payload = {
+        "model":     ucfg.get("model", "openai/gpt-3.5-turbo"),
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user",   "content": api_user_msg}
+        ],
+        "stream": True
+    }
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    content = ""
+    done = False
+    
+    try:
+        with requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            stream=True,
+            timeout=120
+        ) as resp:
+            resp.encoding = 'utf-8'
+            console.print(f"[blue]Antwort: HTTP {resp.status_code}[/blue]")
+            resp.raise_for_status()
+            buffer = ""
+            
+            for chunk in resp.iter_content(chunk_size=1024, decode_unicode=True):
+                buffer += chunk
+                while True:
+                    idx = buffer.find("\n")
+                    if idx == -1:
+                        break
+                    line = buffer[:idx].strip()
+                    buffer = buffer[idx+1:]
+                    
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[len("data:"):].strip()
+                    if data == "[DONE]":
+                        done = True
+                        break
+                    try:
+                        obj = json.loads(data)
+                        delta = obj["choices"][0]["delta"].get("content")
+                        if delta:
+                            print(delta, end="", flush=True)
+                            content += delta
+                    except json.JSONDecodeError:
+                        continue
+                        
+                if done:
+                    break
+            print()
+            
+    except Exception as e:
+        console.print(f"[red]Fehler beim Generieren der Roadmap: {e}[/red]")
+        input("Drücke Enter…")
+        return
+
+    out = repo_path / "roadmap.md"
+    try:
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(content)
+        console.print(f"[green]✓ roadmap.md erstellt: {out}[/green]")
+        write_to_changelog(f"Roadmap generiert: {out.name}", "success")
+    except Exception as e:
+        console.print(f"[red]Fehler beim Speichern: {e}[/red]")
+    input()
+
+
+def tui_setup_github_project(repo_path: Path):
+    """Erstellt GitHub Issues basierend auf einer Roadmap"""
+    console.clear()
+    console.rule(f"[bold cyan]Projekt auf GitHub einrichten: {repo_path.name}")
+
+    roadmap = repo_path / "roadmap.md"
+    console.print(f"[blue]Verwende Roadmap-Datei: {roadmap.resolve()}[/blue]")
+    if not roadmap.exists():
+        console.print(f"[red]❌ Keine roadmap.md in {repo_path} gefunden![/red]")
+        console.print("[yellow]💡 Tipp: Erstelle zuerst eine Roadmap mit 'Roadmap generieren'[/yellow]")
+        input("Drücke Enter, um zurückzugehen…")
+        return
+
+    with open(roadmap, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    issues = []
+    current_phase = None
+    for raw in lines:
+        m_phase = re.match(r'^\s*PHASE\s+(\d+)', raw, re.IGNORECASE)
+        if m_phase:
+            current_phase = m_phase.group(1)
+            continue
+        m_issue = re.match(r'^\s*\[\s*\]\s*(.+)', raw)
+        if m_issue and current_phase:
+            content = m_issue.group(1).strip()
+            parts = content.split(":", 1)
+            if len(parts) != 2:
+                continue
+            raw_title, raw_body = parts
+            title = raw_title.strip().strip("*").strip()
+            body = raw_body.strip()
+            labels = ["enhancement", f"phase-{current_phase}"]
+            issues.append({"title": title, "body": body, "labels": labels})
+
+    if not issues:
+        console.print("[yellow]Keine Issues in roadmap.md gefunden.[/yellow]")
+        console.print("[blue]💡 Format erwartet: '[ ] Titel: Beschreibung' unter 'PHASE X' Überschriften[/blue]")
+        input("Drücke Enter…")
+        return
+
+    console.print("[bold]Vorschau der ersten 3 Issues:[/bold]\n")
+    for iss in issues[:3]:
+        console.print(f"• [bold]Title:[/bold] {iss['title']}")
+        console.print(f"  [bold]Description:[/bold] {iss['body']}")
+        console.print(f"  [bold]Labels:[/bold] {', '.join(iss['labels'])}\n")
+
+    console.print(f"[bold]Gesamt Issues:[/bold] {len(issues)}")
+    if input("Issues auf GitHub übertragen? (j/n): ").lower() != 'j':
+        console.print("[yellow]Abgebrochen[/yellow]")
+        input()
+        return
+
+    user = get_active_user()
+    ucfg = load_user_config(user) or {}
+    token = ucfg.get("token")
+    if not token:
+        console.print("[red]❌ GitHub PAT nicht gefunden![/red]")
+        console.print("[yellow]Bitte konfiguriere einen Token in den Einstellungen.[/yellow]")
+        input()
+        return
+
+    github_api = GitHubAPI(token)
+    owner = user
+    repo = repo_path.name
+
+    created = 0
+    console.print("\n[blue]Erstelle Issues auf GitHub...[/blue]")
+    
+    for iss in issues:
+        success, issue_number = github_api.create_issue(owner, repo, iss["title"], iss["body"], iss["labels"])
+        if success:
+            console.print(f"[green]✓ Issue erstellt #{issue_number}: {iss['title']}[/green]")
+            created += 1
+        else:
+            console.print(f"[red]✗ Fehler bei '{iss['title']}'[/red]")
+        time.sleep(1)  # Rate limiting
+
+    console.print(f"\n[bold]Erstellte Issues:[/bold] {created}")
+    write_to_changelog(f"GitHub Issues erstellt: {created} aus roadmap.md", "success")
+    input("Drücke Enter, um zurückzugehen…")
 
 
 # ─── Section X: CLI Commands (Originalverhalten) ────────────────────────────────
