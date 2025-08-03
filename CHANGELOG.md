@@ -6,6 +6,48 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 
 ## [Unreleased]
 
+### Version 3.7.4.1 (2025-08-03) - OPENROUTER API INTEGRATION
+**🚀 Live Free Coding Models from OpenRouter**
+
+#### ⭐ Major Feature
+- **NEW**: Automatisches Abrufen der besten 4 free coding models von OpenRouter API
+- **ENHANCED**: Dynamische Model-Auswahl basierend auf Live-API-Daten statt hardcoded Liste
+- **INTELLIGENT**: Filterung nach coding/development/software Kriterien
+- **OPTIMIZED**: Sortierung nach Kontext-Länge und Performance-Metriken
+
+#### 🚀 Key Improvements
+- **Live Model Fetching**: API-basierte Abfrage der aktuell verfügbaren free models
+- **Smart Filtering**: Automatische Erkennung von coding-relevanten models durch Keyword-Analyse
+- **Performance Ranking**: Sortierung nach max_completion_tokens und context_length
+- **Graceful Fallback**: Rückfall auf Standard-Models bei API-Fehlern oder fehlendem Token
+
+#### 🔧 Technical Implementation
+- **NEW Function**: `fetch_openrouter_models(token)` für Live-API-Integration
+- **Enhanced `tui_ki_anbindung()`**: Automatische Model-Erkennung und -Auswahl
+- **Error Handling**: Robuste Behandlung von Netzwerk-Timeouts und API-Fehlern
+- **User Experience**: Detaillierte Anzeige von Model-Informationen mit Kontext-Längen
+
+#### 🎯 User Workflow Enhancement
+```
+Einstellungen → AI-Anbindung konfigurieren → OpenRouter Token eingeben
+→ 🔍 Automatisches Laden der Top 4 free coding models
+→ ✨ Auswahl aus live gefetchten, performance-optimierten models
+→ 🚀 Speichern mit optimaler Model-Konfiguration
+```
+
+#### 📋 API Integration Details
+- **Endpoint**: `GET https://openrouter.ai/api/v1/models`
+- **Filtering**: Nur models mit pricing.prompt = "0" und pricing.completion = "0"
+- **Keywords**: code, coding, development, software, programming, dev, instruct, chat, assistant, coder, engineer
+- **Sorting**: Nach context_length und max_completion_tokens (descending)
+- **Limit**: Top 4 models für optimale Auswahl-UX
+
+#### 🛡️ Error Resilience
+- **Network Timeout**: 10 Sekunden timeout mit graceful fallback
+- **API Errors**: Detaillierte Fehlermeldungen und Standard-Model-Liste
+- **Token Validation**: Implizite Validierung durch erfolgreiche API-Calls
+- **Backward Compatibility**: Funktioniert weiterhin ohne OpenRouter Token
+
 ### Version 3.7.3.4 (2025-08-03) - CONFIGURATION ERROR HANDLING
 **🔧 Base64 Padding & Token Recovery Fix**
 
