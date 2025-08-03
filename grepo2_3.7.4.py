@@ -1499,7 +1499,7 @@ def list():
 
     github_api = GitHubAPI(user_config["token"])
     
-    console.print(f"[blue]🔍 Lade Repositories für {active}...[/blue]")
+    console.print(f"[blue]🔍 Lade Repositories für {active}....[/blue]")
     repos = github_api.list_repositories(active)
     
     if not repos:
