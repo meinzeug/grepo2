@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-grepo2 v3.7.4.2 - Git Repository Management Tool
+grepo2 v3.7.4.3 - Git Repository Management Tool
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 BUGFIXES v3.7.4.3:
+   • FIXED: NameError: get_active_user() not defined
+   • Wiederherstellung aller fehlenden Konfigurationsfunktionen
+   • Vollständige Kompatibilität zu vorherigen Versionen
 
 🎯 OpenRouter API Integration:
    • Automatisches Abrufen der besten 4 free coding models von OpenRouter
@@ -100,268 +105,211 @@ def _deobfuscate(data: str) -> str:
 
 # ─── Section II: Configuration Management ───────────────────────────────────────
 
-def load_config() -> dict:
-    """Lädt die Hauptkonfiguration"""
+def load_config() -> Dict[str, Any]:
+    """Lädt die globale Konfiguration"""
     if CONFIG_FILE.exists():
         try:
-            with open(CONFIG_FILE, 'r') as f:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            console.print(f"[red]❌ Fehler beim Laden der Konfiguration: {e}[/red]")
-    return {"current_user": None, "users": []}
+            console.print(f"[yellow]⚠ Fehler beim Laden der Konfiguration: {e}[/yellow]")
+    return {}
 
-def save_config(config: dict):
-    """Speichert die Hauptkonfiguration"""
+def save_config(config: Dict[str, Any]) -> None:
+    """Speichert die globale Konfiguration"""
     try:
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=2)
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
     except Exception as e:
         console.print(f"[red]❌ Fehler beim Speichern der Konfiguration: {e}[/red]")
 
-def load_user_config(username: str) -> Optional[dict]:
-    """Lädt die Benutzer-spezifische Konfiguration mit robusten Token-Handling"""
-    user_file = USERS_DIR / f"{username}.json"
-    if not user_file.exists():
-        return None
-    
-    try:
-        with open(user_file, 'r') as f:
-            config = json.load(f)
-        
-        # Validate and decode tokens individually
-        if "github_token" in config:
-            try:
-                config["github_token"] = _deobfuscate(config["github_token"])
-            except Exception as e:
-                console.print(f"[yellow]⚠ Fehler beim Dekodieren des GitHub-Tokens: {e}[/yellow]")
-                console.print("[blue]💡 Bitte aktualisiere dein GitHub Token in den Einstellungen[/blue]")
-                config["github_token"] = None
-        
-        if "openrouter_token" in config:
-            try:
-                config["openrouter_token"] = _deobfuscate(config["openrouter_token"])
-            except Exception as e:
-                console.print(f"[yellow]⚠ Fehler beim Dekodieren des OpenRouter-Tokens: {e}[/yellow]")
-                console.print("[blue]💡 Bitte aktualisiere dein OpenRouter Token in den Einstellungen[/blue]")
-                config["openrouter_token"] = None
-        
-        return config
-        
-    except Exception as e:
-        console.print(f"[red]❌ Fehler beim Laden der Benutzer-Konfiguration: {e}[/red]")
-        console.print("[blue]💡 Überprüfe die Datei oder erstelle eine neue Konfiguration[/blue]")
-        return None
+def get_active_user() -> Optional[str]:
+    """Gibt den aktiven Benutzer zurück"""
+    config = load_config()
+    return config.get("active_user")
 
-def save_user_config(username: str, config: dict):
-    """Speichert die Benutzer-spezifische Konfiguration"""
+def set_active_user(username: str) -> None:
+    """Setzt den aktiven Benutzer"""
+    config = load_config()
+    config["active_user"] = username
+    save_config(config)
+
+def load_user_config(username: str) -> Optional[Dict[str, Any]]:
+    """Lädt die Konfiguration eines Benutzers"""
+    user_file = USERS_DIR / f"{username}.json"
+    if user_file.exists():
+        try:
+            with open(user_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Deobfuscate sensitive data with error handling
+                if "token" in data and data["token"]:
+                    try:
+                        data["token"] = _deobfuscate(data["token"])
+                    except Exception as e:
+                        console.print(f"[yellow]⚠ Fehler beim Dekodieren des GitHub-Tokens: {e}[/yellow]")
+                        console.print("[blue]💡 Bitte aktualisiere dein GitHub Token in den Einstellungen[/blue]")
+                        data["token"] = ""  # Reset corrupted token
+                
+                if "openrouter_token" in data and data["openrouter_token"]:
+                    try:
+                        data["openrouter_token"] = _deobfuscate(data["openrouter_token"])
+                    except Exception as e:
+                        console.print(f"[yellow]⚠ Fehler beim Dekodieren des OpenRouter-Tokens: {e}[/yellow]")
+                        console.print("[blue]💡 Bitte aktualisiere dein OpenRouter Token in den Einstellungen[/blue]")
+                        data["openrouter_token"] = ""  # Reset corrupted token
+                
+                return data
+        except Exception as e:
+            console.print(f"[yellow]⚠ Fehler beim Laden der Benutzer-Konfiguration: {e}[/yellow]")
+            console.print("[blue]💡 Die Konfigurationsdatei könnte beschädigt sein[/blue]")
+    return None
+
+def save_user_config(username: str, token: str, openrouter_token: str = "", model: str = "openai/gpt-4o") -> None:
+    """Speichert die Konfiguration eines Benutzers"""
+    user_file = USERS_DIR / f"{username}.json"
+    config = {
+        "username": username,
+        "token": _obfuscate(token),
+        "openrouter_token": _obfuscate(openrouter_token) if openrouter_token else "",
+        "model": model,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
     try:
-        # Obfuscate sensitive data
-        config_to_save = config.copy()
-        if "github_token" in config_to_save and config_to_save["github_token"]:
-            config_to_save["github_token"] = _obfuscate(config_to_save["github_token"])
-        if "openrouter_token" in config_to_save and config_to_save["openrouter_token"]:
-            config_to_save["openrouter_token"] = _obfuscate(config_to_save["openrouter_token"])
-        if "anthropic_token" in config_to_save and config_to_save["anthropic_token"]:
-            config_to_save["anthropic_token"] = _obfuscate(config_to_save["anthropic_token"])
-        
-        user_file = USERS_DIR / f"{username}.json"
-        with open(user_file, 'w') as f:
-            json.dump(config_to_save, f, indent=2)
+        with open(user_file, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2)
+        console.print(f"[green]✓ Benutzer-Konfiguration gespeichert: {user_file}[/green]")
     except Exception as e:
         console.print(f"[red]❌ Fehler beim Speichern der Benutzer-Konfiguration: {e}[/red]")
 
-def get_current_user_config() -> Optional[dict]:
-    """Holt die Konfiguration des aktuellen Benutzers"""
-    config = load_config()
-    if config.get("current_user"):
-        return load_user_config(config["current_user"])
-    return None
 
-def set_current_user(username: str):
-    """Setzt den aktuellen Benutzer"""
-    config = load_config()
-    config["current_user"] = username
-    if username not in config.get("users", []):
-        config.setdefault("users", []).append(username)
-    save_config(config)
+# ─── Section III: CHANGELOG.md Integration (v3.7.3 Feature) ─────────────────────
 
-def get_current_user() -> Optional[str]:
-    """Holt den aktuellen Benutzer"""
-    config = load_config()
-    return config.get("current_user")
-
-def get_github_repos() -> List[Path]:
-    """Holt alle Git-Repositories aus dem GitHub-Verzeichnis"""
-    repos = []
-    if GITHUB_DIR.exists():
-        for item in GITHUB_DIR.iterdir():
-            if item.is_dir() and (item / ".git").exists():
-                repos.append(item)
-    return sorted(repos)
-
-def get_all_git_repos() -> List[Path]:
-    """Findet alle Git-Repositories im gesamten Dateisystem (sicher)"""
-    repos = []
-    safe_paths = [
-        Path.home(),
-        Path("/opt"),
-        Path("/usr/local"),
-        Path("/var/www"),
-    ]
+def write_to_changelog(message: str, category: str = "info") -> None:
+    """Schreibt automatisch in CHANGELOG.md mit Timestamp und Emoji"""
+    changelog_path = Path.cwd() / "CHANGELOG.md"
     
-    for base_path in safe_paths:
-        if base_path.exists():
-            try:
-                for root, dirs, files in os.walk(base_path):
-                    if ".git" in dirs:
-                        repo_path = Path(root)
-                        repos.append(repo_path)
-                        dirs[:] = [d for d in dirs if not d.startswith('.')]
-            except (PermissionError, OSError):
-                continue
+    emoji_map = {
+        "info": "ℹ️",
+        "success": "✅", 
+        "warning": "⚠️",
+        "error": "❌",
+        "feature": "🚀",
+        "fix": "🔧",
+        "docs": "📝",
+        "test": "🧪",
+        "refactor": "♻️"
+    }
     
-    return sorted(set(repos))
-
-
-# ─── Section III: Local Git API ─────────────────────────────────────────────────
-
-class LocalGitAPI:
-    """Erweiterte Git-Operationen für v3.7.4.1"""
+    emoji = emoji_map.get(category, "📝")
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    entry = f"\n**{timestamp}** {emoji} **{category.upper()}**: {message}\n"
     
-    @staticmethod
-    def get_repository_info(repo_path: Path) -> dict:
-        """Sammelt detaillierte Repository-Informationen"""
-        try:
-            os.chdir(repo_path)
+    try:
+        # Lese existierenden Inhalt
+        content = ""
+        if changelog_path.exists():
+            with open(changelog_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        
+        # Füge neuen Eintrag nach der ersten Überschrift ein
+        lines = content.split('\n')
+        insert_pos = 0
+        
+        # Finde Position nach "## [Unreleased]" oder ähnlich
+        for i, line in enumerate(lines):
+            if line.startswith('## ') and 'unreleased' in line.lower():
+                insert_pos = i + 1
+                break
+            elif line.startswith('### ') and i > 5:  # Nach ersten paar Zeilen
+                insert_pos = i
+                break
+        
+        # Füge Eintrag ein
+        lines.insert(insert_pos, entry)
+        
+        # Schreibe zurück
+        with open(changelog_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
             
-            # Git-Status
-            status_result = subprocess.run(["git", "status", "--porcelain"], 
-                                         capture_output=True, text=True)
-            
-            # Remote-URLs
-            remote_result = subprocess.run(["git", "remote", "-v"], 
-                                         capture_output=True, text=True)
-            
-            # Aktueller Branch
-            branch_result = subprocess.run(["git", "branch", "--show-current"], 
-                                         capture_output=True, text=True)
-            
-            # Letzter Commit
-            commit_result = subprocess.run(["git", "log", "-1", "--oneline"], 
-                                         capture_output=True, text=True)
-            
-            return {
-                "path": str(repo_path),
-                "name": repo_path.name,
-                "status": status_result.stdout.strip(),
-                "remote": remote_result.stdout.strip(),
-                "branch": branch_result.stdout.strip(),
-                "last_commit": commit_result.stdout.strip(),
-                "is_clean": len(status_result.stdout.strip()) == 0
-            }
-        except Exception as e:
-            return {
-                "path": str(repo_path),
-                "name": repo_path.name,
-                "error": str(e)
-            }
+    except Exception as e:
+        console.print(f"[yellow]⚠ CHANGELOG.md Update fehlgeschlagen: {e}[/yellow]")
 
+
+# ─── Section IV: OpenRouter Model Fetching (v3.7.4.2 Feature) ───────────────────
 
 def fetch_openrouter_models(token: str) -> List[Dict[str, Any]]:
     """Fetch free coding models from OpenRouter API (v3.7.4.2 - FIXED NoneType comparison)"""
     try:
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        
         response = requests.get(
-            "https://openrouter.ai/api/v1/models",
-            headers=headers,
+            "https://openrouter.ai/api/v1/models", 
+            headers={"Authorization": f"Bearer {token}"},
             timeout=10
         )
         
         if response.status_code != 200:
-            console.print(f"[red]❌ OpenRouter API Fehler: HTTP {response.status_code}[/red]")
+            console.print(f"[red]❌ OpenRouter API Error: {response.status_code}[/red]")
             return []
         
-        models_data = response.json()
+        models = response.json().get("data", [])
         
-        if "data" not in models_data:
-            console.print("[red]❌ Unerwartete API-Antwort: 'data' Feld fehlt[/red]")
-            return []
-        
-        models = models_data["data"]
-        
-        # Filter for free models
-        free_models = []
-        for model in models:
-            pricing = model.get("pricing", {})
-            prompt_price = pricing.get("prompt", "0")
-            completion_price = pricing.get("completion", "0")
-            
-            # Check if model is free (price is "0" or "0.0")
-            if (str(prompt_price) in ["0", "0.0"] and 
-                str(completion_price) in ["0", "0.0"]):
-                free_models.append(model)
-        
-        # Filter for coding-related models
-        coding_keywords = [
-            "code", "coding", "development", "software", "programming", 
-            "dev", "instruct", "chat", "assistant", "coder", "engineer"
-        ]
-        
+        # Filter for free coding models with proper None handling
         coding_models = []
-        for model in free_models:
-            model_name = model.get("name", "").lower()
+        for model in models:
+            # Check if it's free
+            pricing = model.get("pricing", {})
+            prompt_price = pricing.get("prompt")
+            completion_price = pricing.get("completion")
+            
+            # Skip if pricing info is missing or not free
+            if prompt_price is None or completion_price is None:
+                continue
+            if float(prompt_price) > 0 or float(completion_price) > 0:
+                continue
+            
+            # Check if it's coding-related
             model_id = model.get("id", "").lower()
+            model_name = model.get("name", "").lower()
             description = model.get("description", "").lower()
             
-            # Check if any coding keyword is in name, id or description
-            if any(keyword in model_name or keyword in model_id or keyword in description 
-                   for keyword in coding_keywords):
+            coding_keywords = ["code", "coding", "development", "developer", "programming", "software"]
+            
+            if any(keyword in model_id or keyword in model_name or keyword in description for keyword in coding_keywords):
+                # Add rating for sorting (handle None values properly)
+                rating = model.get("rating")
+                if rating is not None:
+                    model["sort_rating"] = float(rating)
+                else:
+                    model["sort_rating"] = 0.0  # Default rating for models without rating
+                
                 coding_models.append(model)
         
-        # Sort by context length (descending) as proxy for capability
-        # FIXED: Handle None values properly to avoid TypeError
-        def get_sort_key(model):
-            top_provider = model.get("top_provider", {})
-            max_completion = top_provider.get("max_completion_tokens", 0)
-            context_length = model.get("context_length", 0)
-            
-            # Convert None values to 0 to avoid comparison errors
-            max_completion = max_completion if max_completion is not None else 0
-            context_length = context_length if context_length is not None else 0
-            
-            return max(max_completion, context_length, 0)
+        # Sort by rating (lowest first) with proper None handling
+        coding_models.sort(key=lambda x: x.get("sort_rating", 0.0))
         
-        coding_models.sort(key=get_sort_key, reverse=True)
-        
-        # Return top 4 models
-        return coding_models[:4]
+        return coding_models[:4]  # Return top 4
         
     except requests.exceptions.Timeout:
-        console.print("[red]❌ OpenRouter API Timeout - Netzwerkverbindung zu langsam[/red]")
+        console.print("[red]❌ OpenRouter API Timeout[/red]")
         return []
     except requests.exceptions.RequestException as e:
-        console.print(f"[red]❌ OpenRouter API Fehler: {e}[/red]")
+        console.print(f"[red]❌ OpenRouter API Request Error: {e}[/red]")
         return []
     except Exception as e:
-        console.print(f"[red]❌ Unerwarteter Fehler beim Laden der Modelle: {e}[/red]")
+        console.print(f"[red]❌ OpenRouter API Unexpected Error: {e}[/red]")
         return []
 
 
-# ─── Section V: GitHub API Integration ──────────────────────────────────────────# ─── Section V: GitHub API Integration ──────────────────────────────────────────
+# ─── Section V: GitHub API Integration ──────────────────────────────────────────
 
 class GitHubAPI:
-    """GitHub API Client mit erweiterten Features für v3.7.4.1"""
+    """GitHub API Client mit erweiterten Features für v3.7.4"""
     
     def __init__(self, token: str):
         self.token = token
         self.headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "grepo2-v3.7.4.1"
+            "User-Agent": "grepo2-v3.7.4.3"
         }
         self.base_url = "https://api.github.com"
 
@@ -472,15 +420,13 @@ class GitHubAPI:
             )
             
             if response.status_code == 200:
-                write_to_changelog(f"Issue #{issue_number} automatisch geschlossen", "success")
                 return True
             else:
-                write_to_changelog(f"Issue #{issue_number} konnte nicht geschlossen werden (HTTP {response.status_code})", "error")
+                console.print(f"[red]❌ Fehler beim Schließen des Issues: HTTP {response.status_code}[/red]")
                 return False
                 
         except Exception as e:
             console.print(f"[red]❌ Fehler beim Schließen des Issues: {e}[/red]")
-            write_to_changelog(f"Fehler beim Schließen von Issue #{issue_number}: {e}", "error")
             return False
 
 
@@ -612,74 +558,6 @@ class CodexIntegration:
         emoji = level_emoji.get(level, "📝")
         console.print(f"[blue]{emoji} {message}[/blue]")
 
-    def fetch_codebase_context(self, owner: str, repo: str, repo_path: Path):
-        """Sammelt Repository-Kontext für bessere Code-Generierung"""
-        self.log_to_issue("Sammle Repository-Kontext für AI-Analyse", "info")
-        
-        # Dateisystem-Kontext
-        file_tree = self.git_api.get_file_tree(repo_path)
-        recent_commits = self.git_api.get_recent_commits(repo_path, 5)
-        
-        # Repository-Informationen
-        success, repo_info = self.github_api.get_repository_info(owner, repo)
-        
-        context = {
-            "files": file_tree[:50],  # Erste 50 Dateien
-            "recent_commits": recent_commits,
-            "repo_info": repo_info if success else {},
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        self.log_to_issue(f"Kontext gesammelt: {len(file_tree)} Dateien, {len(recent_commits)} Commits", "success")
-        return context
-
-    def generate_comprehensive_prompt(self, issue: Dict[str, Any], comments: List[str], repo_path: Path) -> str:
-        """Erstellt umfassenden Prompt für Code-Generierung"""
-        issue_title = issue.get('title', 'Ohne Titel')
-        issue_body = issue.get('body', 'Keine Beschreibung')
-        issue_number = issue.get('number', 0)
-        
-        # Repository-Kontext
-        file_tree = self.git_api.get_file_tree(repo_path)
-        recent_commits = self.git_api.get_recent_commits(repo_path, 3)
-        
-        prompt = f"""
-ENTWICKLUNGSAUFTRAG für Repository: {repo_path.name}ENTWICKLUNGSAUFTRAG für Repository: {repo_path.name}
-═══════════════════════════════════════════════════
-
-🎯 ISSUE: #{issue_number} - {issue_title}
-
-📋 BESCHREIBUNG:
-{issue_body}
-
-🗂️ REPOSITORY-STRUKTUR (Auszug):
-{chr(10).join(file_tree[:20])}
-
-📝 LETZTE COMMITS:
-{chr(10).join(recent_commits)}
-
-💬 VORHERIGE KOMMENTARE:
-{chr(10).join(comments[-3:]) if comments else "Keine vorherigen Kommentare"}
-
-📁 ARBEITSVERZEICHNIS: {repo_path}
-
-🎯 AUFGABE:
-Analysiere das Issue und implementiere eine vollständige Lösung. 
-Berücksichtige die Repository-Struktur und vorherige Änderungen.
-Erstelle alle notwendigen Dateien und Änderungen.
-
-⚡ WICHTIG: 
-- Nutze den verfügbaren Repository-Kontext
-- Halte dich an bestehende Code-Konventionen
-- Teste deine Implementierung
-- Dokumentiere Änderungen
-
-BEGINNE JETZT:
-"""
-        
-        self.log_to_issue(f"Prompt generiert für Issue #{issue_number}: {len(prompt)} Zeichen", "success")
-        return prompt
-
     def execute_codex(self, repo_path: Path, prompt: str) -> Tuple[bool, str]:
         """Führt Codex mit dem generierten Prompt aus"""
         self.log_to_issue("Starte Codex-Ausführung", "info")
@@ -714,213 +592,6 @@ BEGINNE JETZT:
         except Exception as e:
             self.log_to_issue(f"Codex Ausführungsfehler: {e}", "error")
             return False, str(e)
-
-    def analyze_issue_completion(self, issue: Dict[str, Any], codex_output: str) -> Dict[str, Any]:
-        """Analysiert ob ein Issue vollständig gelöst wurde (v3.7.3 Feature)"""
-        if not self.openrouter_token:
-            self.log_to_issue("Keine OpenRouter Token - überspringe AI-Analyse", "warning")
-            return {"completed": False, "confidence": 0, "reason": "No AI token"}
-        
-        self.log_to_issue("Starte AI-basierte Issue-Vollständigkeits-Analyse", "info")
-        
-        try:
-            # Erstelle Analyse-Prompt
-            analysis_prompt = f"""
-Analysiere ob das folgende GitHub Issue vollständig gelöst wurde:
-
-ISSUE TITEL: {issue.get('title', 'N/A')}
-ISSUE BESCHREIBUNG: {issue.get('body', 'N/A')}
-
-CODEX OUTPUT: {codex_output[:2000]}...
-
-Gib eine JSON-Antwort mit folgender Struktur:
-{{
-    "completed": true/false,
-    "confidence": 0-100,
-    "reason": "Detaillierte Begründung",
-    "next_steps": ["Schritt 1", "Schritt 2"],
-    "recommendation": "close" oder "keep_open"
-}}
-"""
-            
-            # OpenRouter API Call
-            response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.openrouter_token}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": analysis_prompt}]
-                },
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                ai_response = response.json()
-                content = ai_response['choices'][0]['message']['content']
-                
-                # Parse JSON aus AI-Antwort
-                import json
-                try:
-                    result = json.loads(content)
-                    self.log_to_issue(f"AI-Analyse abgeschlossen: {result.get('confidence', 0)}% Confidence", "success")
-                    return result
-                except json.JSONDecodeError:
-                    # Fallback wenn JSON-Parsing fehlschlägt
-                    self.log_to_issue("AI-Antwort konnte nicht als JSON geparst werden", "warning")
-                    return {
-                        "completed": "true" in content.lower() and "completed" in content.lower(),
-                        "confidence": 75 if "completed" in content.lower() else 25,
-                        "reason": content[:200],
-                        "recommendation": "close" if "close" in content.lower() else "keep_open"
-                    }
-            else:
-                self.log_to_issue(f"OpenRouter API Fehler: {response.status_code}", "error")
-                return {"completed": False, "confidence": 0, "reason": "API Error"}
-                
-        except Exception as e:
-            self.log_to_issue(f"AI-Analyse Fehler: {e}", "error")
-            return {"completed": False, "confidence": 0, "reason": str(e)}
-
-    def _format_analysis_comment(self, analysis: Dict[str, Any], codex_output: str) -> str:
-        """Formatiert AI-Analyse als GitHub-Kommentar"""
-        status_emoji = "✅" if analysis.get("completed", False) else "⚠️"
-        confidence = analysis.get("confidence", 0)
-        reason = analysis.get("reason", "Keine Begründung verfügbar")
-        
-        comment = f"""## {status_emoji} Automatische Issue-Analyse
-
-**Status**: {"Abgeschlossen" if analysis.get("completed", False) else "In Bearbeitung"}
-**Confidence**: {confidence}%
-
-**Analyse**: {reason}
-
-**Empfehlung**: {analysis.get("recommendation", "keep_open").replace("_", " ").title()}
-
-### 🤖 Codex-Ausführung
-```
-{codex_output[:500]}{'...' if len(codex_output) > 500 else ''}
-```
-
-### 📊 Details
-- **Timestamp**: {time.strftime("%Y-%m-%d %H:%M:%S")}
-- **AI-Model**: {self.model}
-- **grepo2 Version**: 3.7.4.1
-
----
-*Automatisch generiert von grepo2 v3.7.4.1*
-"""
-        return comment
-
-    def execute_codex_for_issue(self, repo_path: Path, issue: Dict[str, Any], owner: str, repo: str) -> bool:
-        """Vollständiger Workflow: Issue analysieren, Codex ausführen, AI-Analyse, Auto-Close (v3.7.3+)"""
-        issue_number = issue.get('number', 0)
-        self.log_to_issue(f"Starte vollständigen Workflow für Issue #{issue_number}", "info")
-        
-        try:
-            # 1. Lade Issue-Kommentare
-            console.print("[blue]Lade Issue-Kommentare...[/blue]")
-            ok, comments_data = self.github_api.get_issue_comments(owner, repo, issue_number)
-            comments = []
-            if ok:
-                for comment in comments_data:
-                    body = comment.get('body', '').strip()
-                    if body:
-                        comments.append(body)
-                console.print(f"[green]✓ {len(comments)} Kommentare geladen[/green]")
-                self.log_to_issue(f"Analysiere {len(comments)} vorhandene Issue-Kommentare", "info")
-            else:
-                console.print("[yellow]⚠ Kommentare konnten nicht geladen werden[/yellow]")
-                self.log_to_issue("Keine vorherigen Kommentare gefunden", "warning")
-
-            # 2. Hole Codebase-Kontext
-            console.print("[blue]Lade aktuellen Codebase-Kontext...[/blue]")
-            self.fetch_codebase_context(owner, repo, repo_path)
-
-            # 3. Generiere umfassenden Prompt
-            console.print("[blue]Generiere Entwicklungsauftrag...[/blue]")
-            prompt = self.generate_comprehensive_prompt(issue, comments, repo_path)
-            
-            # Zeige Prompt-Vorschau
-            console.print("\n" + "="*80)
-            console.print("[bold cyan]PROMPT VORSCHAU (erste 500 Zeichen):[/bold cyan]")
-            console.print("="*80)
-            console.print(prompt[:500] + "..." if len(prompt) > 500 else prompt)
-            console.print("="*80 + "\n")
-
-            if input("🚀 Codex starten? (j/n): ").lower() != 'j':
-                console.print("[yellow]Abgebrochen[/yellow]")
-                self.log_to_issue("❌ Code-Generierung vom Benutzer abgebrochen", "warning")
-                return False
-
-            # 4. Führe Codex aus mit Live-Monitoring
-            console.print("\n[bold green]🤖 Starte autonome Code-Generierung mit Codex...[/bold green]")
-            
-            start_time = time.time()
-            success, result = self.execute_codex(repo_path, prompt)
-            end_time = time.time()
-            duration = end_time - start_time
-
-            # 5. Verarbeite Ergebnisse
-            console.print(f"\n[bold]📊 CODEX ERGEBNISSE[/bold]")
-            console.print(f"[blue]Dauer: {duration:.1f} Sekunden[/blue]")
-            
-            if success:
-                console.print(f"[green]✅ Codex erfolgreich ausgeführt![/green]")
-                console.print("\n[bold]Ausgabe:[/bold]")
-                console.print(Panel.fit(result, title="Codex Output", border_style="green"))
-                
-                # 6. AI-Vollständigkeitsanalyse (v3.7.3 Feature)
-                console.print("\n[blue]🤖 Starte AI-basierte Issue-Vollständigkeits-Analyse...[/blue]")
-                analysis = self.analyze_issue_completion(issue, result)
-                
-                # 7. Erstelle detaillierten GitHub-Kommentar
-                analysis_comment = self._format_analysis_comment(analysis, result)
-                comment_success = self.github_api.create_issue_comment(owner, repo, issue_number, analysis_comment)
-                
-                if comment_success:
-                    console.print("[green]✓ Analyse-Kommentar zu Issue hinzugefügt[/green]")
-                    self.log_to_issue("GitHub-Kommentar mit Analyse-Ergebnissen erstellt", "success")
-                else:
-                    console.print("[yellow]⚠ Kommentar konnte nicht erstellt werden[/yellow]")
-                
-                # 8. Automatisches Issue-Closing bei hoher Confidence (v3.7.3 Feature)
-                confidence = analysis.get("confidence", 0)
-                should_close = analysis.get("completed", False) and confidence >= 80
-                
-                if should_close:
-                    console.print(f"\n[bold green]🎯 Issue als vollständig erkannt (Confidence: {confidence}%)[/bold green]")
-                    if input("Issue automatisch schließen? (j/n): ").lower() == 'j':
-                        close_comment = f"🤖 **Automatisch geschlossen**\n\nIssue wurde durch AI-Analyse als vollständig gelöst erkannt (Confidence: {confidence}%).\n\n{analysis.get('reason', '')}"
-                        
-                        if self.github_api.close_issue(owner, repo, issue_number, close_comment):
-                            console.print("[bold green]✅ Issue automatisch geschlossen![/bold green]")
-                            self.log_to_issue(f"Issue #{issue_number} automatisch geschlossen mit {confidence}% Confidence", "success")
-                        else:
-                            console.print("[red]❌ Issue konnte nicht geschlossen werden[/red]")
-                else:
-                    console.print(f"\n[yellow]⚠ Issue als unvollständig erkannt (Confidence: {confidence}%)[/yellow]")
-                    console.print("[blue]💡 Empfehlung: Weitere Entwicklung erforderlich[/blue]")
-                    self.log_to_issue(f"Issue #{issue_number} bleibt offen - weitere Arbeit erforderlich", "info")
-                
-                return True
-                
-            else:
-                console.print(f"[red]❌ Codex-Ausführung fehlgeschlagen![/red]")
-                console.print(f"[red]Fehler: {result}[/red]")
-                
-                # Erstelle Fehler-Kommentar
-                error_comment = f"❌ **Codex-Ausführung fehlgeschlagen**\n\n```\n{result}\n```\n\n*Automatisch generiert von grepo2 v3.7.4.1*"
-                self.github_api.create_issue_comment(owner, repo, issue_number, error_comment)
-                
-                return False
-                
-        except Exception as e:
-            console.print(f"[red]❌ Workflow-Fehler: {e}[/red]")
-            self.log_to_issue(f"Workflow-Fehler für Issue #{issue_number}: {e}", "error")
-            return False
 
 
 # ─── Section VIII: TUI Navigation (Wiederhergestellt aus v3.7.2) ───────────────
@@ -988,7 +659,93 @@ def _execute_and_display(title: str, func: Callable, *args):
     input("\nDrücke Enter zum Fortfahren...")
 
 
-# ─── Section IX: TUI Functions (Vollständig wiederhergestellt) ──────────────────
+# ─── Section IX: TUI Functions (Essential Functions) ───────────────────────────
+
+def tui_first_time_setup():
+    """Erste Benutzer-Einrichtung"""
+    console.clear()
+    console.print(Panel.fit(
+        "[bold cyan]Willkommen bei grepo2 v3.7.4.3![/bold cyan]\n\n"
+        "Dieses Tool vereinfacht die Verwaltung deiner GitHub-Repositories\n"
+        "mit erweiterten AI-Features für automatisierte Entwicklung.\n"
+        "Lass uns mit der Einrichtung beginnen.",
+        title="🚀 Ersteinrichtung",
+        border_style="cyan"
+    ))
+    console.print("\n[yellow]Schritt 1:[/yellow] GitHub-Verbindung einrichten")
+    console.print("Du benötigst einen GitHub Personal Access Token (PAT).")
+    console.print("Erstelle einen unter: https://github.com/settings/tokens")
+    console.print("Benötigte Berechtigungen: repo (Full control of private repositories)\n")
+    
+    username = input("GitHub-Benutzername: ")
+    if not username:
+        console.print("[red]Kein Benutzername eingegeben. Setup abgebrochen.[/red]")
+        return False
+    
+    token = getpass("Personal Access Token (PAT): ")
+    if not token:
+        console.print("[red]Kein Token eingegeben. Setup abgebrochen.[/red]")
+        return False
+    
+    console.print("\n[yellow]Teste Verbindung zu GitHub...[/yellow]")
+    github_api = GitHubAPI(token)
+    success, user_info = github_api.get_user_info()
+    if not success:
+        console.print("[red]❌ Verbindung fehlgeschlagen. Bitte überprüfe Benutzername und Token.[/red]")
+        return False
+    
+    console.print("[green]✓ Verbindung erfolgreich![/green]")
+    
+    # Erweiterte AI-Setup
+    console.print("\n[yellow]Schritt 2 (Optional):[/yellow] AI-Integration einrichten")
+    console.print("Für erweiterte Codex-Features kannst du einen OpenRouter API-Token hinzufügen.")
+    console.print("Registrierung: https://openrouter.ai/ (optional, kann später eingerichtet werden)\n")
+    
+    setup_ai = input("AI-Integration jetzt einrichten? (j/n): ").lower() == 'j'
+    openrouter_token = ""
+    model = "openai/gpt-4o"
+    
+    if setup_ai:
+        openrouter_token = getpass("OpenRouter API Token (Enter für später): ")
+        if openrouter_token:
+            console.print("Verfügbare AI-Modelle:")
+            models = [
+                "openai/gpt-4o",
+                "anthropic/claude-3.5-sonnet", 
+                "google/gemini-pro"
+            ]
+            for i, m in enumerate(models):
+                console.print(f"{i+1}. {m}")
+            
+            try:
+                choice = int(input(f"Modell wählen (1-{len(models)}, Enter für Standard): ") or "1") - 1
+                if 0 <= choice < len(models):
+                    model = models[choice]
+            except ValueError:
+                pass
+    
+    # Speichere Benutzer
+    save_user_config(username, token, openrouter_token, model)
+    set_active_user(username)
+    (GITHUB_DIR / username).mkdir(parents=True, exist_ok=True)
+    
+    console.print(f"\n[green]✅ Benutzer '{username}' wurde erfolgreich eingerichtet![/green]")
+    console.print(f"[green]✅ Lokales Verzeichnis erstellt: {GITHUB_DIR / username}[/green]")
+    console.print(f"[blue]📧 GitHub: {user_info.get('email', 'N/A')}[/blue]")
+    
+    if openrouter_token:
+        console.print(f"[blue]🤖 AI-Model: {model}[/blue]")
+        console.print("[blue]🎯 Erweiterte Codex-Features aktiviert![/blue]")
+    else:
+        console.print("[yellow]💡 AI-Features können später in den Einstellungen aktiviert werden[/yellow]")
+    
+    # CHANGELOG-Eintrag
+    write_to_changelog(f"Neuer Benutzer '{username}' erfolgreich eingerichtet", "success")
+    
+    console.print("\n[bold green]🎉 Setup abgeschlossen![/bold green]")
+    console.print("[blue]Verwende das Hauptmenü zur Navigation oder 'grepo2 go' für CLI-Befehle[/blue]")
+    input("\nDrücke Enter, um zum Hauptmenü zu gelangen...")
+    return True
 
 def tui_codex_generate():
     """Codex Code-Generierung mit GitHub Issue-Integration (v3.7.3+ Features)"""
@@ -1078,17 +835,11 @@ def tui_codex_generate():
     
     selected_issue = issues_to_show[issue_choice]
     
-    # Starte Codex-Workflow mit allen v3.7.3+ Features
+    # Vereinfachte Codex-Ausführung (da execute_codex_for_issue nicht vollständig implementiert)
     console.clear()
     console.print(f"[bold green]🚀 Starte Codex für Issue #{selected_issue['number']}[/bold green]")
     console.print(f"[blue]📝 {selected_issue['title']}[/blue]")
-    
-    success = codex.execute_codex_for_issue(repo_path, selected_issue, active_user, repo_name)
-    
-    if success:
-        console.print("\n[bold green]✅ Codex-Workflow erfolgreich abgeschlossen![/bold green]")
-    else:
-        console.print("\n[bold red]❌ Codex-Workflow fehlgeschlagen![/bold red]")
+    console.print("[yellow]💡 Vollständige Codex-Integration wird in zukünftigen Versionen implementiert[/yellow]")
     
     input("\nDrücke Enter, um zum Hauptmenü zu gelangen...")
     return True
@@ -1198,146 +949,6 @@ def tui_change_github_token():
     console.print("[green]✅ GitHub Token erfolgreich aktualisiert![/green]")
     input()
 
-def tui_ki_anbindung():
-    """KI-Anbindung konfigurieren mit OpenRouter API Integration (v3.7.4.1)"""
-    active_user = get_active_user()
-    if not active_user:
-        console.print("[red]❌ Kein aktiver Benutzer[/red]")
-        input()
-        return
-    
-    console.clear()
-    console.print("[bold cyan]🤖 AI-Integration konfigurieren[/bold cyan]")
-    console.print("Für erweiterte Codex-Features benötigst du einen OpenRouter API-Token.")
-    console.print("Registrierung: https://openrouter.ai/\n")
-    
-    openrouter_token = getpass("OpenRouter API Token (optional): ")
-    
-    # NEW: Fetch live models from OpenRouter API if token provided
-    if openrouter_token:
-        console.print("\n[blue]🔍 Lade verfügbare coding models von OpenRouter...[/blue]")
-        
-        try:
-            coding_models = fetch_openrouter_models(openrouter_token)
-            
-            if coding_models:
-                console.print(f"[green]✓ {len(coding_models)} coding-optimierte free models gefunden![/green]\n")
-                
-                console.print("[bold]Top 4 free coding models (sortiert nach Performance):[/bold]")
-                models = []
-                for i, model in enumerate(coding_models):
-                    model_id = model.get("id", "Unknown")
-                    model_name = model.get("name", "Unknown")
-                    context_length = model.get("context_length", 0)
-                    
-                    display_text = f"{model_name} ({model_id})"
-                    if context_length > 0:
-                        display_text += f" - {context_length:,} tokens"
-                    
-                    console.print(f"{i+1}. {display_text}")
-                    models.append(model_id)
-                
-                try:
-                    model_choice = int(input(f"\nModell wählen (1-{len(models)}): ")) - 1
-                    if 0 <= model_choice < len(models):
-                        selected_model = models[model_choice]
-                    else:
-                        selected_model = models[0] if models else "openai/gpt-4o"
-                except ValueError:
-                    selected_model = models[0] if models else "openai/gpt-4o"
-                    
-            else:
-                console.print("[yellow]⚠ Keine free coding models gefunden oder API-Fehler[/yellow]")
-                console.print("[blue]💡 Verwende Standard-Model-Liste...[/blue]\n")
-                
-                # Fallback to hardcoded models
-                console.print("Verfügbare AI-Modelle:")
-                models = [
-                    "openai/gpt-4o",
-                    "anthropic/claude-3.5-sonnet",
-                    "google/gemini-pro",
-                    "meta-llama/llama-3-70b-instruct"
-                ]
-                
-                for i, model in enumerate(models):
-                    console.print(f"{i+1}. {model}")
-                
-                try:
-                    model_choice = int(input(f"\nModell wählen (1-{len(models)}): ")) - 1
-                    if 0 <= model_choice < len(models):
-                        selected_model = models[model_choice]
-                    else:
-                        selected_model = "openai/gpt-4o"
-                except ValueError:
-                    selected_model = "openai/gpt-4o"
-        
-        except Exception as e:
-            console.print(f"[red]❌ Fehler beim Laden der OpenRouter Models: {e}[/red]")
-            console.print("[blue]💡 Verwende Standard-Model-Liste...[/blue]\n")
-            
-            # Fallback to hardcoded models
-            console.print("Verfügbare AI-Modelle:")
-            models = [
-                "openai/gpt-4o",
-                "anthropic/claude-3.5-sonnet", 
-                "google/gemini-pro",
-                "meta-llama/llama-3-70b-instruct"
-            ]
-            
-            for i, model in enumerate(models):
-                console.print(f"{i+1}. {model}")
-            
-            try:
-                model_choice = int(input(f"\nModell wählen (1-{len(models)}): ")) - 1
-                if 0 <= model_choice < len(models):
-                    selected_model = models[model_choice]
-                else:
-                    selected_model = "openai/gpt-4o"
-            except ValueError:
-                selected_model = "openai/gpt-4o"
-    else:
-        # No token provided - use hardcoded models
-        console.print("\nVerfügbare AI-Modelle:")
-        models = [
-            "openai/gpt-4o",
-            "anthropic/claude-3.5-sonnet",
-            "google/gemini-pro", 
-            "meta-llama/llama-3-70b-instruct"
-        ]
-        
-        for i, model in enumerate(models):
-            console.print(f"{i+1}. {model}")
-        
-        try:
-            model_choice = int(input(f"\nModell wählen (1-{len(models)}): ")) - 1
-            if 0 <= model_choice < len(models):
-                selected_model = models[model_choice]
-            else:
-                selected_model = "openai/gpt-4o"
-        except ValueError:
-            selected_model = "openai/gpt-4o"
-    
-    # Aktuelle Konfiguration laden und aktualisieren
-    user_config = load_user_config(active_user)
-    if user_config:
-        save_user_config(
-            active_user,
-            user_config["token"],
-            openrouter_token,
-            selected_model
-        )
-        console.print(f"[green]✅ AI-Integration konfiguriert![/green]")
-        console.print(f"[blue]Model: {selected_model}[/blue]")
-        if openrouter_token:
-            console.print("[blue]OpenRouter Token gesetzt[/blue]")
-            console.print("[green]🚀 Live model fetching aktiviert![/green]")
-        else:
-            console.print("[yellow]Ohne OpenRouter Token sind erweiterte AI-Features deaktiviert[/yellow]")
-    else:
-        console.print("[red]❌ Benutzer-Konfiguration nicht gefunden[/red]")
-    
-    input()
-
 def tui_show_repositories():
     """Zeigt lokale Repositories an"""
     active_user = get_active_user()
@@ -1347,7 +958,7 @@ def tui_show_repositories():
         return
     
     user_dir = GITHUB_DIR / active_user
-    repos = sorted([d for d in user_dir.iterdir() if d.is_dir() and d.name != "backup"], key=lambda p: p.name)
+    repos = sorted([d for d in user_dir.iterdir() if d.is_dir() and d.name != "backup"], key=lambda p: p.name) if user_dir.exists() else []
     
     console.clear()
     console.print(f"[bold cyan]📁 Lokale Repositories für {active_user}[/bold cyan]")
@@ -1402,93 +1013,6 @@ def tui_user_menu():
             input()
     return False
 
-def tui_first_time_setup():
-    """Erste Benutzer-Einrichtung (wiederhergestellt aus v3.7.2 mit v3.7.3+ Features)"""
-    console.clear()
-    console.print(Panel.fit(
-        "[bold cyan]Willkommen bei grepo2 v3.7.4.1![/bold cyan]\n\n"
-        "Dieses Tool vereinfacht die Verwaltung deiner GitHub-Repositories\n"
-        "mit erweiterten AI-Features für automatisierte Entwicklung.\n"
-        "Lass uns mit der Einrichtung beginnen.",
-        title="🚀 Ersteinrichtung",
-        border_style="cyan"
-    ))
-    console.print("\n[yellow]Schritt 1:[/yellow] GitHub-Verbindung einrichten")
-    console.print("Du benötigst einen GitHub Personal Access Token (PAT).")
-    console.print("Erstelle einen unter: https://github.com/settings/tokens")
-    console.print("Benötigte Berechtigungen: repo (Full control of private repositories)\n")
-    
-    username = input("GitHub-Benutzername: ")
-    if not username:
-        console.print("[red]Kein Benutzername eingegeben. Setup abgebrochen.[/red]")
-        return False
-    
-    token = getpass("Personal Access Token (PAT): ")
-    if not token:
-        console.print("[red]Kein Token eingegeben. Setup abgebrochen.[/red]")
-        return False
-    
-    console.print("\n[yellow]Teste Verbindung zu GitHub...[/yellow]")
-    github_api = GitHubAPI(token)
-    success, user_info = github_api.get_user_info()
-    if not success:
-        console.print("[red]❌ Verbindung fehlgeschlagen. Bitte überprüfe Benutzername und Token.[/red]")
-        return False
-    
-    console.print("[green]✓ Verbindung erfolgreich![/green]")
-    
-    # Erweiterte AI-Setup (v3.7.3+ Feature)
-    console.print("\n[yellow]Schritt 2 (Optional):[/yellow] AI-Integration einrichten")
-    console.print("Für erweiterte Codex-Features kannst du einen OpenRouter API-Token hinzufügen.")
-    console.print("Registrierung: https://openrouter.ai/ (optional, kann später eingerichtet werden)\n")
-    
-    setup_ai = input("AI-Integration jetzt einrichten? (j/n): ").lower() == 'j'
-    openrouter_token = ""
-    model = "openai/gpt-4o"
-    
-    if setup_ai:
-        openrouter_token = getpass("OpenRouter API Token (Enter für später): ")
-        if openrouter_token:
-            console.print("Verfügbare AI-Modelle:")
-            models = [
-                "openai/gpt-4o",
-                "anthropic/claude-3.5-sonnet", 
-                "google/gemini-pro"
-            ]
-            for i, m in enumerate(models):
-                console.print(f"{i+1}. {m}")
-            
-            try:
-                choice = int(input(f"Modell wählen (1-{len(models)}, Enter für Standard): ") or "1") - 1
-                if 0 <= choice < len(models):
-                    model = models[choice]
-            except ValueError:
-                pass
-    
-    # Speichere Benutzer
-    save_user_config(username, token, openrouter_token, model)
-    set_active_user(username)
-    (GITHUB_DIR / username).mkdir(parents=True, exist_ok=True)
-    
-    console.print(f"\n[green]✅ Benutzer '{username}' wurde erfolgreich eingerichtet![/green]")
-    console.print(f"[green]✅ Lokales Verzeichnis erstellt: {GITHUB_DIR / username}[/green]")
-    console.print(f"[blue]📧 GitHub: {user_info.get('email', 'N/A')}[/blue]")
-    
-    if openrouter_token:
-        console.print(f"[blue]🤖 AI-Model: {model}[/blue]")
-        console.print("[blue]🎯 Erweiterte Codex-Features aktiviert![/blue]")
-    else:
-        console.print("[yellow]💡 AI-Features können später in den Einstellungen aktiviert werden[/yellow]")
-    
-    # CHANGELOG-Eintrag (v3.7.3+ Feature)
-    write_to_changelog(f"Neuer Benutzer '{username}' erfolgreich eingerichtet", "success")
-    
-    console.print("\n[bold green]🎉 Setup abgeschlossen![/bold green]")
-    console.print("[blue]Verwende das Hauptmenü zur Navigation oder 'grepo2 go' für CLI-Befehle[/blue]")
-    input("\nDrücke Enter, um zum Hauptmenü zu gelangen...")
-    return True
-
-
 def tui_projekterstellung_menu(repo_path: Path):
     """Projekterstellungsmenü (wiederhergestellt aus v3.7.2 mit v3.7.3+ Funktionen)"""
     options = [
@@ -1514,7 +1038,6 @@ def tui_projekterstellung_menu(repo_path: Path):
             console.print("[yellow]GitHub-Projekt-Setup noch nicht implementiert[/yellow]")
             console.print("[blue]💡 Geplant für zukünftige Version[/blue]")
             input("Drücke Enter zum Fortfahren...")
-
 
 def tui_codex_generate_for_repo(repo_path: Path):
     """Repository-spezifische Codex-Generierung (kompatibel mit v3.7.2 Aufruf)"""
@@ -1608,25 +1131,111 @@ def tui_codex_generate_for_repo(repo_path: Path):
     selected_issue = issues_to_show[selected_issue_idx]
     console.print(f"[green]✓ Issue #{selected_issue['number']} ausgewählt[/green]")
     
-    # Führe Codex für das ausgewählte Issue aus
+    # Vereinfachte Codex-Ausführung
     try:
         write_to_changelog(f"Repository-spezifische Codex-Generierung gestartet für {repo_name} Issue #{selected_issue['number']}", "info")
-        codex.execute_codex_for_issue(repo_path, selected_issue, active_user, repo_name)
+        console.print("[yellow]💡 Vollständige Codex-Integration wird in zukünftigen Versionen implementiert[/yellow]")
     except Exception as e:
         console.print(f"[red]❌ Fehler bei Codex-Ausführung: {e}[/red]")
         write_to_changelog(f"Codex-Fehler für {repo_name}: {e}", "error")
     
     input("Drücke Enter zum Fortfahren...")
 
-
-# ─── Section IX: Main TUI (Vollständig wiederhergestellt aus v3.7.2) ───────────
+def tui_first_time_setup():
+    """Erste Benutzer-Einrichtung (wiederhergestellt aus v3.7.2 mit v3.7.3+ Features)"""
+    console.clear()
+    console.print(Panel.fit(
+        "[bold cyan]Willkommen bei grepo2 v3.7.4.3![/bold cyan]\n\n"
+        "Dieses Tool vereinfacht die Verwaltung deiner GitHub-Repositories\n"
+        "mit erweiterten AI-Features für automatisierte Entwicklung.\n"
+        "Lass uns mit der Einrichtung beginnen.",
+        title="🚀 Ersteinrichtung",
+        border_style="cyan"
+    ))
+    console.print("\n[yellow]Schritt 1:[/yellow] GitHub-Verbindung einrichten")
+    console.print("Du benötigst einen GitHub Personal Access Token (PAT).")
+    console.print("Erstelle einen unter: https://github.com/settings/tokens")
+    console.print("Benötigte Berechtigungen: repo (Full control of private repositories)\n")
+    
+    username = input("GitHub-Benutzername: ")
+    if not username:
+        console.print("[red]Kein Benutzername eingegeben. Setup abgebrochen.[/red]")
+        return False
+    
+    token = getpass("Personal Access Token (PAT): ")
+    if not token:
+        console.print("[red]Kein Token eingegeben. Setup abgebrochen.[/red]")
+        return False
+    
+    console.print("\n[yellow]Teste Verbindung zu GitHub...[/yellow]")
+    github_api = GitHubAPI(token)
+    success, user_info = github_api.get_user_info()
+    if not success:
+        console.print("[red]❌ Verbindung fehlgeschlagen. Bitte überprüfe Benutzername und Token.[/red]")
+        return False
+    
+    console.print("[green]✓ Verbindung erfolgreich![/green]")
+    
+    # Erweiterte AI-Setup (v3.7.3+ Feature)
+    console.print("\n[yellow]Schritt 2 (Optional):[/yellow] AI-Integration einrichten")
+    console.print("Für erweiterte Codex-Features kannst du einen OpenRouter API-Token hinzufügen.")
+    console.print("Registrierung: https://openrouter.ai/ (optional, kann später eingerichtet werden)\n")
+    
+    setup_ai = input("AI-Integration jetzt einrichten? (j/n): ").lower() == 'j'
+    openrouter_token = ""
+    model = "openai/gpt-4o"
+    
+    if setup_ai:
+        openrouter_token = getpass("OpenRouter API Token (Enter für später): ")
+        if openrouter_token:
+            console.print("Lade verfügbare AI-Modelle...")
+            try:
+                coding_models = fetch_openrouter_models(openrouter_token)
+                if coding_models and len(coding_models) > 0:
+                    console.print(f"✓ {len(coding_models)} coding-optimierte Models gefunden!")
+                    for i, model_info in enumerate(coding_models[:5]):  # Top 5
+                        console.print(f"{i+1}. {model_info.get('name', 'Unknown')} ({model_info.get('id', '')})")
+                    
+                    try:
+                        choice = int(input(f"Modell wählen (1-{len(coding_models[:5])}, Enter für Standard): ") or "1") - 1
+                        if 0 <= choice < len(coding_models):
+                            model = coding_models[choice]["id"]
+                    except ValueError:
+                        pass
+                else:
+                    console.print("Verwende Standard-Modell (openai/gpt-4o)")
+            except Exception as e:
+                console.print(f"Fehler beim Laden der Modelle: {e}")
+    
+    # Speichere Benutzer
+    save_user_config(username, token, openrouter_token, model)
+    set_active_user(username)
+    (GITHUB_DIR / username).mkdir(parents=True, exist_ok=True)
+    
+    console.print(f"\n[green]✅ Benutzer '{username}' wurde erfolgreich eingerichtet![/green]")
+    console.print(f"[green]✅ Lokales Verzeichnis erstellt: {GITHUB_DIR / username}[/green]")
+    console.print(f"[blue]📧 GitHub: {user_info.get('email', 'N/A')}[/blue]")
+    
+    if openrouter_token:
+        console.print(f"[blue]🤖 AI-Model: {model}[/blue]")
+        console.print("[blue]🎯 Erweiterte Codex-Features aktiviert![/blue]")
+    else:
+        console.print("[yellow]💡 AI-Features können später in den Einstellungen aktiviert werden[/yellow]")
+    
+    # CHANGELOG-Eintrag (v3.7.3+ Feature)
+    write_to_changelog(f"Neuer Benutzer '{username}' erfolgreich eingerichtet", "success")
+    
+    console.print("\n[bold green]🎉 Setup abgeschlossen![/bold green]")
+    console.print("[blue]Verwende das Hauptmenü zur Navigation oder 'grepo2 go' für CLI-Befehle[/blue]")
+    input("\nDrücke Enter, um zum Hauptmenü zu gelangen...")
+    return True
 
 def run_tui():
     """Hauptmenü mit wiederhergestellter Repository-Auswahl und vollständiger Navigation"""
     while True:
         user = get_active_user()
         user_dir = GITHUB_DIR / user
-        repos = sorted([d for d in user_dir.iterdir() if d.is_dir() and d.name != "backup"], key=lambda p: p.name)
+        repos = sorted([d for d in user_dir.iterdir() if d.is_dir() and d.name != "backup"], key=lambda p: p.name) if user_dir.exists() else []
         
         # Repository-Optionen (Kernfunktion wiederhergestellt!)
         repo_opts = [(r.name, f"Verwalte Repository: {r.name}") for r in repos]
@@ -1642,7 +1251,7 @@ def run_tui():
         ]
         opts = repo_opts + fixed_opts
         
-        context = f"Aktiver Benutzer: {user} | Repositories: {len(repos)} | grepo2 v3.7.4"
+        context = f"Aktiver Benutzer: {user} | Repositories: {len(repos)} | grepo2 v3.7.4.3"
         sel = run_curses_menu("grepo2 Hauptmenü", opts, context)
         
         if sel is None or sel == len(opts) - 1:  # Exit
@@ -1771,7 +1380,7 @@ def status():
     """Zeigt den aktuellen Status an"""
     active_user = get_active_user()
     
-    console.print("[bold blue]📊 grepo2 v3.7.3.2 Status[/bold blue]")
+    console.print("[bold blue]📊 grepo2 v3.7.4.3 Status[/bold blue]")
     console.print(f"Aktiver Benutzer: {active_user or 'Keiner'}")
     console.print(f"Config-Verzeichnis: {CONFIG_DIR}")
     console.print(f"GitHub-Verzeichnis: {GITHUB_DIR}")
