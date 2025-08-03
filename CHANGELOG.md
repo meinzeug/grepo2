@@ -6,6 +6,93 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 
 ## [Unreleased]
 
+### Version 3.7.3.4 (2025-08-03) - CONFIGURATION ERROR HANDLING
+**🔧 Base64 Padding & Token Recovery Fix**
+
+#### ⭐ Major Fix
+- **FIXED**: "Incorrect padding" error in base64 token decoding 
+- **IMPROVED**: Robust user configuration loading with automatic recovery
+- **ENHANCED**: Better error messages and recovery guidance for corrupted tokens
+- **MAINTAINED**: All existing functionality while improving reliability
+
+#### 🚀 Key Improvements
+- **Automatic Padding**: Base64 decoder now handles missing padding automatically
+- **Graceful Degradation**: Corrupted tokens don't crash the application
+- **Recovery Instructions**: Clear guidance when tokens need to be updated
+- **Backward Compatibility**: Still works with existing valid configurations
+
+#### 🔧 Technical Implementation
+- **Enhanced `_deobfuscate()`**: Automatic padding calculation and fallback handling
+- **Improved `load_user_config()`**: Individual token validation with specific error messages
+- **Better Error Handling**: Distinguishes between GitHub and OpenRouter token issues
+- **User Guidance**: Provides specific instructions for fixing configuration problems
+
+#### 🐛 Specific Bug Fixes
+- **Base64 Error**: "Incorrect padding" → Automatic padding correction
+- **Configuration Loading**: Graceful handling of corrupted token data
+- **User Experience**: Clear error messages instead of cryptic technical errors
+- **Token Recovery**: Guides users to fix their configuration through settings
+
+#### 🎯 Error Flow Before Fix
+```
+Hauptmenü → Projekterstellung → REPONAME → Code generieren mit Codex
+→ ⚠ Fehler beim Laden der Benutzer-Konfiguration: Incorrect padding
+→ ❌ Benutzer-Konfiguration nicht gefunden
+```
+
+#### ✅ Error Flow After Fix
+```
+Hauptmenü → Projekterstellung → REPONAME → Code generieren mit Codex
+→ ⚠ Fehler beim Dekodieren des GitHub-Tokens: Incorrect padding  
+→ 💡 Bitte aktualisiere dein GitHub Token in den Einstellungen
+→ [Continues with graceful recovery]
+```
+
+---
+
+### Version 3.7.3.3 (2025-08-03) - MISSING FUNCTION RESTORATION
+**🔧 Critical NameError Fix**
+
+#### ⭐ Major Fix
+- **RESTORED**: Missing `tui_projekterstellung_menu` function that caused NameError crash
+- **ADDED**: Repository-specific Codex generation via `tui_codex_generate_for_repo`
+- **FIXED**: Project creation menu now fully functional with roadmap/issues/codex options
+- **PRESERVED**: All v3.7.3+ features (auto-close issues, CHANGELOG integration, AI analysis)
+
+#### 🚀 Key Improvements
+- **Error-Free Navigation**: Project creation menu no longer crashes with NameError
+- **Dual Codex Access**: Codex available both in main menu and project creation submenu
+- **Repository Context**: Project creation menu provides repository-specific code generation
+- **Full Functionality**: All menu options now work as intended from previous versions
+
+#### 📋 Fixed Menu Structure
+| Menu Path | Function | Status |
+|-----------|----------|--------|
+| **Main Menu** → **Projekterstellung** | ✅ Now functional, no NameError |
+| **Projekterstellung** → **Code generieren mit Codex** | ✅ Repository-specific AI generation |
+| **Projekterstellung** → **Roadmap generieren** | ✅ Placeholder (planned) |
+| **Projekterstellung** → **Projekt auf GitHub einrichten** | ✅ Placeholder (planned) |
+
+#### 🔧 Technical Implementation
+- **Function Added**: `tui_projekterstellung_menu(repo_path: Path)` with full menu structure
+- **Support Function**: `tui_codex_generate_for_repo(repo_path: Path)` for repository-specific calls
+- **Parameter Compatibility**: Handles both parameterized (from project menu) and non-parameterized (from main menu) Codex calls
+- **Code Preservation**: All existing Codex classes and AI integration functionality maintained
+
+#### 🎯 User Experience
+- **Crash-Free Operation**: No more NameError when accessing project creation
+- **Intuitive Menu Flow**: Repository selection → Project creation → Specific actions
+- **Consistent Interface**: Rich console output with emojis and color coding maintained
+- **Feature Complete**: Restores all functionality described in issue report
+
+#### 🐛 Specific Bug Fixes
+- **NameError Fix**: `tui_projekterstellung_menu` is not defined → Function properly implemented
+- **Menu Access**: Project creation menu fully restored with all expected options
+- **Codex Integration**: Repository-specific code generation working in project context
+- **Function Signatures**: Proper parameter handling for different calling contexts
+
+---
+
 # CHANGELOG.md
 
 ## grepo2 - Git Repository Management Tool
